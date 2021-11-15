@@ -23,7 +23,8 @@ export const ModuleRenderer: React.FC<Props> = props => {
   function evalObject<T extends Record<string, any>>(obj: T): T {
     return services.stateManager.mapValuesDeep({ obj }, ({ value }) => {
       if (typeof value === 'string') {
-        return services.stateManager.maskedEval(value, true, evalScope);
+        const result = services.stateManager.maskedEval(value, true, evalScope);
+        return result;
       }
       return value;
     }).obj;
@@ -38,7 +39,9 @@ export const ModuleRenderer: React.FC<Props> = props => {
     };
     return services.stateManager.mapValuesDeep({ obj }, ({ value }) => {
       if (typeof value === 'string' && hasScopeKey(value)) {
-        return services.stateManager.maskedEval(value, true, scope);
+        console.log('表达式', value);
+        const result = services.stateManager.maskedEval(value, true, scope);
+        return result;
       }
       return value;
     }).obj;
@@ -60,6 +63,7 @@ export const ModuleRenderer: React.FC<Props> = props => {
     return evalWithScope(moduleSpec.spec.stateMap, { $moduleId: moduleId });
   }, [moduleSpec, moduleId]);
 
+  console.log('evaledProperties', evaledProperties);
   const evaledModuleTemplate = useDeepCompareMemo(() => {
     // here should only eval with evaledProperties, any other key not in evaledProperties should be ignored
     // so we can asumme that template will not change if evaledProperties is the same

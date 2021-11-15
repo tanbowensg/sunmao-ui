@@ -32,5 +32,14 @@ describe('parseExpression function', () => {
     expect(parseExpression('{{ $listItem.value }}', true)).toMatchObject([
       { expression: '$listItem.value', isDynamic: true },
     ]);
+    expect(parseExpression('{{ $listItem.value }}', true)).toMatchObject([
+      { expression: '$listItem.value', isDynamic: true },
+    ]);
+    expect(
+      parseExpression(
+        '{{ {{$moduleId}}input.value + {{$moduleId}}fetch.value }}someText',
+        true
+      )
+    ).toMatchObject([{ expression: '$listItem.value', isDynamic: true }]);
   });
 });

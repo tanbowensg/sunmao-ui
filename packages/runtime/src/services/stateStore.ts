@@ -8,6 +8,9 @@ import { reactive } from '@vue/reactivity';
 import { arrayToTree } from 'performant-array-to-tree';
 import { watch } from '../utils/watchReactivity';
 import { LIST_ITEM_EXP, LIST_ITEM_INDEX_EXP } from '../constants';
+import { parseExpression, evalExp } from '../utils/parseExpression';
+(window as any).parse = parseExpression;
+(window as any).evalExp = evalExp;
 
 dayjs.extend(relativeTime);
 dayjs.extend(isLeapYear);
@@ -18,6 +21,8 @@ type ExpChunk = {
   expression: string;
   isDynamic: boolean;
 };
+
+type Exp = string | Exp[];
 
 // TODO: use web worker
 const builtIn = {
@@ -34,8 +39,13 @@ function isNumeric(x: string | number) {
 export function initStateManager() {
   return new StateManager();
 }
+
 export class StateManager {
   store = reactive<Record<string, any>>({});
+
+  constructor() {
+    (window as any).store = this.store;
+  }
 
   parseExpression(str: string, parseListItem = false): ExpChunk[] {
     let l = 0;
@@ -90,6 +100,30 @@ export class StateManager {
     return res;
   }
 
+  evalExp(exp: Exp, scopeObject = {}): unknown {
+    console.log('scopeObject', scopeObject);
+    if (typeof exp === 'string') {
+      return exp;
+    }
+
+    if (exp.length === 1 && typeof exp[0] !== 'string') {
+      return this.evalExp(exp[0], scopeObject);
+    }
+    const evalText = exp.map(ex => this.evalExp(ex, scopeObject)).join('');
+    console.log('evalText', evalText);
+    let evaled;
+    try {
+      evaled = new Function(`with(this) { return ${evalText} }`).call({
+        ...this.store,
+        ...builtIn,
+        ...scopeObject,
+      });
+    } catch (e: any) {
+      return evalText;
+    }
+    return evaled;
+  }
+
   maskedEval(raw: string, evalListItem = false, scopeObject = {}) {
     if (isNumeric(raw)) {
       return toNumber(raw);
@@ -100,26 +134,17 @@ export class StateManager {
     if (raw === 'false') {
       return false;
     }
+    console.log('raw', raw);
+    const exp = parseExpression(raw, evalListItem);
+    console.log('exp', exp);
 
-    const expChunks = this.parseExpression(raw, evalListItem);
-    const evaled = expChunks.map(({ expression: exp, isDynamic }) => {
-      if (!isDynamic) {
-        return exp;
-      }
-      try {
-        const result = new Function(`with(this) { return ${exp} }`).call({
-          ...this.store,
-          ...builtIn,
-          ...scopeObject,
-        });
-        return result;
-      } catch (e: any) {
-        // console.error(Error(`Cannot eval value '${exp}' in '${raw}': ${e.message}`));
-        return undefined;
-      }
-    });
+    if (isArray(exp) && exp.length === 1 && typeof exp[0] === 'string') {
+      return exp[0];
+    }
 
-    return evaled.length === 1 ? evaled[0] : evaled.join('');
+    const result = this.evalExp(exp, scopeObject);
+    console.log('最终结果', result);
+    return result;
   }
 
   mapValuesDeep(
@@ -150,14 +175,15 @@ export class StateManager {
 
     const evaluated = this.mapValuesDeep(obj, ({ value: v, path }) => {
       if (typeof v === 'string') {
-        const isDynamicExpression = this.parseExpression(v).some(
-          ({ isDynamic }) => isDynamic
+        const isDynamicExpression = parseExpression(v).some(
+          exp => typeof exp !== 'string'
         );
         const result = this.maskedEval(v);
         if (isDynamicExpression && watcher) {
           const stop = watch(
             () => {
-              return this.maskedEval(v);
+              const result = this.maskedEval(v);
+              return result;
             },
             newV => {
               set(evaluated, path, newV);

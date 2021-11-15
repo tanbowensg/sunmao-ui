@@ -34,6 +34,8 @@ export const ImplWrapper = React.forwardRef<HTMLDivElement, ImplWrapperProps>(
     let handlerMap = globalHandlerMap.get(c.id)!;
     useEffect(() => {
       const handler = (s: { componentId: string; name: string; parameters?: any }) => {
+        console.log('handler', s.componentId, c.id);
+        console.log('handlerMap[s.name]', handlerMap[s.name]);
         if (s.componentId !== c.id) {
           return;
         }
