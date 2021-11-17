@@ -107,7 +107,7 @@
                 "headers": {
                   "Content-Type": "application/json"
                 },
-                "body": "{{ {...table.selectedItem, name: nameInput.value } }}",
+                "body": "{{ _.set(_.clone(table.selectedItem), 'name', nameInput.value) }}",
                 "lazy": true,
                 "onComplete": [
                   {

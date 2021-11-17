@@ -8,19 +8,12 @@ import { reactive } from '@vue/reactivity';
 import { arrayToTree } from 'performant-array-to-tree';
 import { watch } from '../utils/watchReactivity';
 import { LIST_ITEM_EXP, LIST_ITEM_INDEX_EXP } from '../constants';
-import { parseExpression, evalExp } from '../utils/parseExpression';
 (window as any).parse = parseExpression;
-(window as any).evalExp = evalExp;
 
 dayjs.extend(relativeTime);
 dayjs.extend(isLeapYear);
 dayjs.extend(LocalizedFormat);
 dayjs.locale('zh-cn');
-
-type ExpChunk = {
-  expression: string;
-  isDynamic: boolean;
-};
 
 type Exp = string | Exp[];
 
@@ -43,74 +36,12 @@ export function initStateManager() {
 export class StateManager {
   store = reactive<Record<string, any>>({});
 
-  constructor() {
-    (window as any).store = this.store;
-  }
-
-  parseExpression(str: string, parseListItem = false): ExpChunk[] {
-    let l = 0;
-    let r = 0;
-    let isInBrackets = false;
-    const res = [];
-
-    while (r < str.length - 1) {
-      if (!isInBrackets && str.substr(r, 2) === '{{') {
-        if (l !== r) {
-          const substr = str.substring(l, r);
-          res.push({
-            expression: substr,
-            isDynamic: false,
-          });
-        }
-        isInBrackets = true;
-        r += 2;
-        l = r;
-      } else if (isInBrackets && str.substr(r, 2) === '}}') {
-        // remove \n from start and end of substr
-        const substr = str.substring(l, r).replace(/^\s+|\s+$/g, '');
-        const chunk = {
-          expression: substr,
-          isDynamic: true,
-        };
-        // $listItem cannot be evaled in stateStore, so don't mark it as dynamic
-        // unless explicitly pass parseListItem as true
-        if (
-          (substr.includes(LIST_ITEM_EXP) || substr.includes(LIST_ITEM_INDEX_EXP)) &&
-          !parseListItem
-        ) {
-          chunk.expression = `{{${substr}}}`;
-          chunk.isDynamic = false;
-        }
-        res.push(chunk);
-
-        isInBrackets = false;
-        r += 2;
-        l = r;
-      } else {
-        r++;
-      }
-    }
-
-    if (r >= l && l < str.length) {
-      res.push({
-        expression: str.substring(l, r + 1),
-        isDynamic: false,
-      });
-    }
-    return res;
-  }
-
   evalExp(exp: Exp, scopeObject = {}): unknown {
-    console.log('scopeObject', scopeObject);
     if (typeof exp === 'string') {
       return exp;
     }
 
-    if (exp.length === 1 && typeof exp[0] !== 'string') {
-      return this.evalExp(exp[0], scopeObject);
-    }
     const evalText = exp.map(ex => this.evalExp(ex, scopeObject)).join('');
-    console.log('evalText', evalText);
     let evaled;
     try {
       evaled = new Function(`with(this) { return ${evalText} }`).call({
@@ -134,17 +65,13 @@ export class StateManager {
     if (raw === 'false') {
       return false;
     }
-    console.log('raw', raw);
     const exp = parseExpression(raw, evalListItem);
-    console.log('exp', exp);
 
-    if (isArray(exp) && exp.length === 1 && typeof exp[0] === 'string') {
-      return exp[0];
+    const result = exp.map(e => this.evalExp(e, scopeObject));
+    if (result.length === 1) {
+      return result[0];
     }
-
-    const result = this.evalExp(exp, scopeObject);
-    console.log('最终结果', result);
-    return result;
+    return result.join('');
   }
 
   mapValuesDeep(
@@ -203,4 +130,91 @@ export class StateManager {
       stop: () => stops.forEach(s => s()),
     };
   }
+}
+
+// copy and modify from this library
+// https://github.com/dy/parenthesis/blob/master/index.js
+export function parseExpression(str: string, parseListItem = false): Exp[] {
+  if (
+    (str.includes(LIST_ITEM_EXP) || str.includes(LIST_ITEM_INDEX_EXP)) &&
+    !parseListItem
+  ) {
+    return [str];
+  }
+
+  let res = [str];
+
+  const bracket = ['{{', '}}'];
+
+  const escape = '___';
+
+  // create parenthesis regex
+  const pRE = new RegExp(
+    ['\\', bracket[0], '[^\\', bracket[0], '\\', bracket[1], ']*\\', bracket[1]].join('')
+  );
+
+  let ids: number[] = [];
+
+  function replaceToken(token: string) {
+    // save token to res
+    const refId = res.push(token.slice(bracket[0].length, -bracket[1].length)) - 1;
+
+    ids.push(refId);
+
+    return escape + refId + escape;
+  }
+
+  res.forEach(function (str, i) {
+    let prevStr;
+
+    // replace paren tokens till there’s none
+    let a = 0;
+    while (str != prevStr) {
+      prevStr = str;
+      str = str.replace(pRE, replaceToken);
+      if (a++ > 10e3)
+        throw Error('References have circular dependency. Please, check them.');
+    }
+
+    res[i] = str;
+  });
+
+  // wrap found refs to brackets
+  ids = ids.reverse();
+  res = res.map(function (str) {
+    ids.forEach(function (id) {
+      str = str.replace(
+        new RegExp('(\\' + escape + id + '\\' + escape + ')', 'g'),
+        bracket[0] + '$1' + bracket[1]
+      );
+    });
+    return str;
+  });
+
+  const re = new RegExp('\\' + escape + '([0-9]+)' + '\\' + escape);
+  // transform references to tree
+  function nest(str: string, refs: string[]): Exp[] {
+    const res = [];
+    let match: RegExpExecArray | null;
+
+    let a = 0;
+    while ((match = re.exec(str))) {
+      if (a++ > 10e3) throw Error('Circular references in parenthesis');
+      const pre = str.slice(0, match.index - 2);
+      if (pre) {
+        res.push(pre);
+      }
+
+      res.push(nest(refs[Number(match[1])], refs));
+
+      str = str.slice(match.index + match[0].length + 2);
+    }
+    if (str) {
+      res.push(str);
+    }
+
+    return res;
+  }
+
+  return nest(res[0], res);
 }

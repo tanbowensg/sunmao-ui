@@ -18,7 +18,6 @@ const ArrayStateTrait: TraitImplementation<Static<typeof PropsSchema>> = ({
   const hasInitialized = HasInitializedMap.get(hashId);
 
   if (!hasInitialized) {
-    console.log('initialValue', initialValue);
     mergeState({ [key]: initialValue });
 
     const methods = {
